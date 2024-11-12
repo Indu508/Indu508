@@ -7,12 +7,16 @@ import pandas as pd
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 import os
+from dotenv import load_dotenv
 
-# Initialize Flask app and Celery
+# Load environment variables from .env file
+load_dotenv()
+
+# Initialize Flask app
 app = Flask(__name__)
 
 # Celery configuration
-app.config['CELERY_BROKER_URL'] = 'redis://localhost:6379/0'
+app.config['CELERY_BROKER_URL'] = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
 celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
 celery.conf.update(app.config)
 
@@ -20,7 +24,7 @@ celery.conf.update(app.config)
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 
 # Initialize SendGrid API
-SENDGRID_API_KEY = 'your-sendgrid-api-key'
+SENDGRID_API_KEY = os.getenv('SENDGRID_API_KEY')
 
 def send_email_via_sendgrid(to_email, subject, content):
     sg = sendgrid.SendGridAPIClient(api_key=SENDGRID_API_KEY)
@@ -65,19 +69,17 @@ def analytics():
 
 if __name__ == '__main__':
     app.run(debug=True)
-from app import celery, send_custom_email
-from celery.bin import worker
+from app import celery
 
 if __name__ == '__main__':
-    worker.worker(app=celery).start()
-Flask==2.0.2
-pandas==1.3.3
-sendgrid==6.9.1import React, { useState } from 'react';
+    celery.start()
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
 function App() {
   const [file, setFile] = useState(null);
   const [status, setStatus] = useState(null);
+  const [emailStats, setEmailStats] = useState(null);
 
   const handleFileChange = (event) => {
     setFile(event.target.files[0]);
@@ -98,45 +100,14 @@ function App() {
     }
   };
 
-  return (
-    <div className="App">
-      <h1>Email Sender</h1>
-      <input type="file" onChange={handleFileChange} />
-      <button onClick={handleUpload}>Upload and Send Emails</button>
-      {status && <p>Status: {status}</p>}
-    </div>
-  );
-}
-google-api-python-client==2.26.1
-google-auth-oauthlib==0.4.6
-google-auth-httplib2==0.1.0
-celery==5.2.3
-openai==0.27.0
-import React, { useState } from 'react';
-import axios from 'axios';
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      const result = await axios.get('http://localhost:5000/analytics');
+      setEmailStats(result.data);
+    }, 5000);
 
-function App() {
-  const [file, setFile] = useState(null);
-  const [status, setStatus] = useState(null);
-
-  const handleFileChange = (event) => {
-    setFile(event.target.files[0]);
-  };
-
-  const handleUpload = async () => {
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-      const response = await axios.post('http://localhost:5000/send-emails', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-      setStatus(response.data.status);
-    } catch (error) {
-      console.error(error);
-      setStatus('Error occurred while sending emails.');
-    }
-  };
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <div className="App">
@@ -144,10 +115,46 @@ function App() {
       <input type="file" onChange={handleFileChange} />
       <button onClick={handleUpload}>Upload and Send Emails</button>
       {status && <p>Status: {status}</p>}
+      {emailStats && (
+        <div>
+          <p>Emails Sent: {emailStats.emails_sent}</p>
+          <p>Emails Failed: {emailStats.emails_failed}</p>
+        </div>
+      )}
     </div>
   );
 }
+
 export default App;
+version: '3'
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - redis
+    environment:
+      - SENDGRID_API_KEY=${SENDGRID_API_KEY}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    command: python app.py
+
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+    depends_on:
+      - backend
 {
   "name": "email-sender-app",
   "version": "1.0.0",
@@ -165,76 +172,7 @@ export default App;
     "eject": "react-scripts eject"
   }
 }
-useEffect(() => {
-  const interval = setInterval(async () => {
-    const result = await axios.get('http://localhost:5000/analytics');
-    setEmailStats(result.data);
-  }, 5000);
 
-  return () => clearInterval(interval);
-}, []);
-version: '3'
-
-services:
-  backend:
-    build: ./backend
-    ports:
-      - "5000:5000"
-    volumes:
-      - ./backend:/app
-    depends_on:
-      - redis
-
-  redis:
-    image: redis:latest
-    ports:
-      - "6379:6379"
-
-  frontend:
-    build: ./frontend
-    ports:
-      - "3000:3000"
-    volumes:
-      - ./frontend:/app
-    depends_on:
-      - backend
-FROM python:3.9-slim
-
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-
-COPY . .
-
-CMD ["python", "app.py"]
-FROM node:14
-
-WORKDIR /app
-
-COPY package.json package-lock.json ./
-RUN npm install
-
-COPY . .
-
-CMD ["npm", "start"]
-# Email Sender App
-
-A web application to send customized emails using data from a Google Sheet or CSV file. The application uses OpenAI for content generation and integrates with SendGrid to send emails.
-
-## Features:
-- Upload CSV or Google Sheets to customize email content
-- Email content generation using OpenAI's API
-- Email scheduling, throttling, and tracking
-- Real-time email analytics and status dashboard
-- Support for SendGrid, SES, and other ESPs
-
-## Setup
-
-1. Clone the repository:
-2. bash
-    git clone https://github.com/yourusername/email-sender-app.git
-   
 
 
 
